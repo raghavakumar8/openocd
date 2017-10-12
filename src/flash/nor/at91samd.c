@@ -67,15 +67,21 @@
 
 /* Known identifiers */
 #define SAMD_PROCESSOR_M0	0x01
+#define SAMD_PROCESSOR_M4	0x06
 #define SAMD_FAMILY_D		0x00
 #define SAMD_FAMILY_L		0x01
 #define SAMD_FAMILY_C		0x02
+#define SAMD_FAMILY_E		0x03
 #define SAMD_SERIES_20		0x00
 #define SAMD_SERIES_21		0x01
 #define SAMD_SERIES_22		0x02
 #define SAMD_SERIES_10		0x02
 #define SAMD_SERIES_11		0x03
 #define SAMD_SERIES_09		0x04
+#define SAMD_SERIES_51		0x06
+#define SAME_SERIES_54		0x04
+#define SAME_SERIES_53		0x03
+#define SAME_SERIES_51		0x01
 
 /* Device ID macros */
 #define SAMD_GET_PROCESSOR(id) (id >> 28)
@@ -247,6 +253,45 @@ static const struct samd_part samc21_parts[] = {
 	{ 0x0D, "SAMC21E15A", 32, 4 },
 };
 
+/* Known SAME54 parts. */
+static const struct samd_part same54_parts[] = {
+	{ 0x00, "SAME54P20A", 1024, 256 },
+	{ 0x01, "SAME54P19A", 512, 192 },
+	{ 0x02, "SAME54N20A", 1024, 256 },
+	{ 0x03, "SAME54N19A", 512, 192 }
+};
+
+/* Known SAME53 parts. */
+static const struct samd_part same53_parts[] = {
+	{ 0x02, "SAME53N20A", 1024, 256 },
+	{ 0x03, "SAME53N19A", 512, 192 },
+	{ 0x04, "SAME53J20A", 1024, 256 },
+	{ 0x05, "SAME53J19A", 512, 192 },
+	{ 0x06, "SAME53J18A", 256, 128 }
+};
+
+/* Known SAME51 parts. */
+static const struct samd_part same51_parts[] = {
+	{ 0x00, "SAME51N20A", 1024, 256 },
+	{ 0x01, "SAME51N19A", 512, 192 },
+	{ 0x02, "SAME51J19A", 512, 192 },
+	{ 0x03, "SAME51J18A", 256, 128 },
+	{ 0x04, "SAME51J20A", 1024, 256 }
+};
+
+/* Known SAMD51 parts. */
+static const struct samd_part samd51_parts[] = {
+	{ 0x00, "SAMD51P20A", 1024, 256 },
+	{ 0x01, "SAMD51P19A", 512, 192 },
+	{ 0x02, "SAMD51N20A", 1024, 256 },
+	{ 0x03, "SAMD51N19A", 512, 192 },
+	{ 0x04, "SAMD51J20A", 1024, 256 },
+	{ 0x05, "SAMD51J19A", 512, 192 },
+	{ 0x06, "SAMD51J18A", 256, 128 },
+	{ 0x07, "SAMD51G19A", 512, 192 },
+	{ 0x08, "SAMD51G18A", 256, 128 }
+};
+
 /* Each family of parts contains a parts table in the DEVSEL field of DID.  The
  * processor ID, family ID, and series ID are used to determine which exact
  * family this is and then we can use the corresponding table. */
@@ -280,6 +325,14 @@ static const struct samd_family samd_families[] = {
 		samc20_parts, ARRAY_SIZE(samc20_parts) },
 	{ SAMD_PROCESSOR_M0, SAMD_FAMILY_C, SAMD_SERIES_21,
 		samc21_parts, ARRAY_SIZE(samc21_parts) },
+	{ SAMD_PROCESSOR_M4, SAMD_FAMILY_E, SAME_SERIES_54,
+		same54_parts, ARRAY_SIZE(same54_parts) },
+	{ SAMD_PROCESSOR_M4, SAMD_FAMILY_E, SAME_SERIES_53,
+		same53_parts, ARRAY_SIZE(same53_parts) },
+	{ SAMD_PROCESSOR_M4, SAMD_FAMILY_E, SAME_SERIES_51,
+		same51_parts, ARRAY_SIZE(same51_parts) },
+	{ SAMD_PROCESSOR_M4, SAMD_FAMILY_D, SAMD_SERIES_51,
+		samd51_parts, ARRAY_SIZE(samd51_parts) }
 };
 
 struct samd_info {
