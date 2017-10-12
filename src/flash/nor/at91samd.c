@@ -30,10 +30,10 @@
 
 #define SAMD_FLASH			((uint32_t)0x00000000)	/* physical Flash memory */
 #define SAMD_USER_ROW		((uint32_t)0x00804000)	/* User Row of Flash */
-#define SAMD_PAC1			0x41000000	/* Peripheral Access Control 1 */
 #define SAMD_DSU			0x41002000	/* Device Service Unit */
 #define SAMD_NVMCTRL		0x41004000	/* Non-volatile memory controller */
 
+#define SAMD_DSU_CTRL		0x00		/* CTRL register */
 #define SAMD_DSU_STATUSA        1               /* DSU status register */
 #define SAMD_DSU_DID		0x18		/* Device ID register */
 #define SAMD_DSU_CTRL_EXT	0x100		/* CTRL register, external access */
@@ -901,17 +901,23 @@ COMMAND_HANDLER(samd_handle_chip_erase_command)
 	int res = ERROR_FAIL;
 
 	if (target) {
-		/* Enable access to the DSU by disabling the write protect bit */
-		target_write_u32(target, SAMD_PAC1, (1<<1));
-		/* intentionally without error checking - not accessible on secured chip */
 
 		/* Tell the DSU to perform a full chip erase.  It takes about 240ms to
 		 * perform the erase. */
-		res = target_write_u8(target, SAMD_DSU + SAMD_DSU_CTRL_EXT, (1<<4));
+
+		res = target_write_u8(target, SAMD_DSU + SAMD_DSU_CTRL, (1<<4));
 		if (res == ERROR_OK)
 			command_print(CMD_CTX, "chip erase started");
 		else
-			command_print(CMD_CTX, "write to DSU CTRL failed");
+		{
+			command_print(CMD_CTX, "write to DSU CTRL failed. Attempting CTRL EXT");
+
+			res = target_write_u8(target, SAMD_DSU + SAMD_DSU_CTRL_EXT, (1<<4));
+			if (res == ERROR_OK)
+				command_print(CMD_CTX, "chip erase started");
+			else
+				command_print(CMD_CTX, "write to DSU CTRL failed");
+		}
 	}
 
 	return res;
