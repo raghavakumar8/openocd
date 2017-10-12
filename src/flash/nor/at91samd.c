@@ -26,6 +26,7 @@
 #include <target/cortex_m.h>
 
 #define SAMD_NUM_PROT_BLOCKS	16
+#define SAMD5x_NUM_PROT_BLOCKS	32
 #define SAMD_PAGE_SIZE_MAX	1024
 
 #define SAMD_FLASH			((uint32_t)0x00000000)	/* physical Flash memory */
@@ -46,6 +47,13 @@
 #define SAMD_NVMCTRL_ADDR		0x1C	/* NVM address register */
 #define SAMD_NVMCTRL_LOCK		0x20	/* NVM Lock section register */
 
+#define SAMD5x_NVMCTRL_CTRLA		0x00	/* NVM control A register */
+#define SAMD5x_NVMCTRL_CTRLB		0x04	/* NVM control B register */
+#define SAMD5x_NVMCTRL_PARAM		0x08	/* NVM parameters register */
+#define SAMD5x_NVMCTRL_INTFLAG		0x10	/* NVM Interupt Flag Status & Clear */
+#define SAMD5x_NVMCTRL_ADDR		0x14	/* NVM address register */
+#define SAMD5x_NVMCTRL_RUNLOCK		0x18	/* NVM Lock section register */
+
 #define SAMD_CMDEX_KEY		0xA5UL
 #define SAMD_NVM_CMD(n)		((SAMD_CMDEX_KEY << 8) | (n & 0x7F))
 
@@ -62,8 +70,20 @@
 #define SAMD_NVM_CMD_SSB	0x45		/* Set Security Bit */
 #define SAMD_NVM_CMD_INVALL	0x46		/* Invalidate all caches */
 
+#define SAMD5x_NVM_CMD_EP	0x00		/* Erase Page */
+#define SAMD5x_NVM_CMD_EB	0x01  		/* Erase Block */
+#define SAMD5x_NVM_CMD_WP	0x03		/* Write Page */
+#define SAMD5x_NVM_CMD_WQW	0x04		/* Write Quad Word */
+#define SAMD5x_NVM_CMD_LR	0x11		/* Lock Region */
+#define SAMD5x_NVM_CMD_UR	0x12		/* Unlock Region */
+#define SAMD5x_NVM_CMD_SPRM	0x13		/* Set Power Reduction Mode */
+#define SAMD5x_NVM_CMD_CPRM	0x14		/* Clear Power Reduction Mode */
+#define SAMD5x_NVM_CMD_PBC	0x15		/* Page Buffer Clear */
+#define SAMD5x_NVM_CMD_SSB	0x16		/* Set Security Bit */
+
 /* NVMCTRL bits */
 #define SAMD_NVM_CTRLB_MANW 0x80
+#define SAMD5x_NVM_WMODE_MAN(ctrla) ((ctrla & 0x0030) == 0x0)
 
 /* Known identifiers */
 #define SAMD_PROCESSOR_M0	0x01
@@ -344,11 +364,10 @@ struct samd_info {
 	bool probed;
 	struct target *target;
 	struct samd_info *next;
+	struct samd_family *family;
 };
 
 static struct samd_info *samd_chips;
-
-
 
 static const struct samd_part *samd_find_part(uint32_t id)
 {
@@ -371,19 +390,76 @@ static const struct samd_part *samd_find_part(uint32_t id)
 	return NULL;
 }
 
+static int samd_find_family_id(uint32_t id)
+{
+	uint8_t processor = SAMD_GET_PROCESSOR(id);
+	uint8_t family = SAMD_GET_FAMILY(id);
+	uint8_t series = SAMD_GET_SERIES(id);
+	uint8_t devsel = SAMD_GET_DEVSEL(id);
+
+	for (unsigned i = 0; i < ARRAY_SIZE(samd_families); i++) {
+		if (samd_families[i].processor == processor &&
+			samd_families[i].series == series &&
+			samd_families[i].family == family) {
+			for (unsigned j = 0; j < samd_families[i].num_parts; j++) {
+				if (samd_families[i].parts[j].id == devsel)
+					return i;
+			}
+		}
+	}
+
+	return 0;
+}
+
+static bool is_chip_cortex_m4(struct samd_info *samd_chip)
+{
+	return (samd_chip->family->processor == SAMD_PROCESSOR_M4);
+}
+
+static bool is_target_cortex_m4(struct target *target)
+{
+	uint32_t id;
+	int res;
+
+	res = target_read_u32(target, SAMD_DSU + SAMD_DSU_DID, &id);
+	if (res != ERROR_OK) {
+		LOG_ERROR("Couldn't read Device ID register");
+		return false;
+	}
+
+	return SAMD_GET_PROCESSOR(id) == SAMD_PROCESSOR_M4;
+}
+
 static int samd_protect_check(struct flash_bank *bank)
 {
 	int res, prot_block;
-	uint16_t lock;
 
-	res = target_read_u16(bank->target,
-			SAMD_NVMCTRL + SAMD_NVMCTRL_LOCK, &lock);
-	if (res != ERROR_OK)
-		return res;
+	if(is_chip_cortex_m4((struct samd_info *) bank->driver_priv))
+	{
+		uint32_t lock;
 
-	/* Lock bits are active-low */
-	for (prot_block = 0; prot_block < bank->num_prot_blocks; prot_block++)
-		bank->prot_blocks[prot_block].is_protected = !(lock & (1u<<prot_block));
+		res = target_read_u32(bank->target,
+				SAMD_NVMCTRL + SAMD5x_NVMCTRL_RUNLOCK, &lock);
+		if (res != ERROR_OK)
+			return res;
+
+		/* Lock bits are active-low */
+		for (prot_block = 0; prot_block < bank->num_prot_blocks; prot_block++)
+			bank->prot_blocks[prot_block].is_protected = !(lock & (1u<<prot_block));
+	}
+	else
+	{
+		uint16_t lock;
+
+		res = target_read_u16(bank->target,
+				SAMD_NVMCTRL + SAMD_NVMCTRL_LOCK, &lock);
+		if (res != ERROR_OK)
+			return res;
+
+		/* Lock bits are active-low */
+		for (prot_block = 0; prot_block < bank->num_prot_blocks; prot_block++)
+			bank->prot_blocks[prot_block].is_protected = !(lock & (1u<<prot_block));
+	}
 
 	return ERROR_OK;
 }
@@ -432,6 +508,9 @@ static int samd_probe(struct flash_bank *bank)
 		return ERROR_FAIL;
 	}
 
+	int i = samd_find_family_id(id);
+	chip->family = (struct samd_family*) &samd_families[i];
+
 	bank->size = part->flash_kb * 1024;
 
 	res = samd_get_flash_page_info(bank->target, &chip->page_size,
@@ -449,20 +528,39 @@ static int samd_probe(struct flash_bank *bank)
 				part->flash_kb, chip->num_pages, chip->page_size);
 	}
 
-	/* Erase granularity = 1 row = 4 pages */
-	chip->sector_size = chip->page_size * 4;
+	if (is_chip_cortex_m4(chip))
+	{
+		/* Erase granularity = 1 block = 16 pages */
+		chip->sector_size = chip->page_size * 16;
 
-	/* Allocate the sector table */
-	bank->num_sectors = chip->num_pages / 4;
+		/* Allocate the sector table */
+		bank->num_sectors = chip->num_pages / 16;
+
+		/* 32 protection blocks per device */
+		chip->prot_block_size = bank->size / SAMD5x_NUM_PROT_BLOCKS;
+
+		/* Allocate the table of protection blocks */
+		bank->num_prot_blocks = SAMD5x_NUM_PROT_BLOCKS;
+	}
+	else
+	{
+		/* Erase granularity = 1 row = 4 pages */
+		chip->sector_size = chip->page_size * 4;
+
+		/* Allocate the sector table */
+		bank->num_sectors = chip->num_pages / 4;
+
+		/* 16 protection blocks per device */
+		chip->prot_block_size = bank->size / SAMD_NUM_PROT_BLOCKS;
+
+		/* Allocate the table of protection blocks */
+		bank->num_prot_blocks = SAMD_NUM_PROT_BLOCKS;
+	}
+
 	bank->sectors = alloc_block_array(0, chip->sector_size, bank->num_sectors);
 	if (!bank->sectors)
 		return ERROR_FAIL;
 
-	/* 16 protection blocks per device */
-	chip->prot_block_size = bank->size / SAMD_NUM_PROT_BLOCKS;
-
-	/* Allocate the table of protection blocks */
-	bank->num_prot_blocks = SAMD_NUM_PROT_BLOCKS;
 	bank->prot_blocks = alloc_block_array(0, chip->prot_block_size, bank->num_prot_blocks);
 	if (!bank->prot_blocks)
 		return ERROR_FAIL;
@@ -483,36 +581,86 @@ static int samd_check_error(struct target *target)
 	int ret, ret2;
 	uint16_t status;
 
-	ret = target_read_u16(target,
+	if (is_target_cortex_m4(target))
+	{
+		ret = target_read_u16(target,
+			SAMD_NVMCTRL + SAMD5x_NVMCTRL_INTFLAG, &status);
+		if (ret != ERROR_OK) {
+			LOG_ERROR("Can't read NVM status");
+			return ret;
+		}
+
+		if ((status & 0x003e) == 0)
+			return ERROR_OK;
+
+		if (status & (1 << 6)) { /* NVME */
+			LOG_ERROR("SAMD: NVM Error");
+			ret = ERROR_FLASH_OPERATION_FAILED;
+		}
+
+		if (status & (1 << 5)) { /* ECCDE */
+			LOG_ERROR("SAMD: NVM ECC dual error");
+		}
+
+		if (status & (1 << 4)) { /* ECCSE */
+			LOG_ERROR("SAMD: NVM ECC single error");
+		}
+
+		if (status & (1 << 3)) { /* LOCKE */
+			LOG_ERROR("SAMD: NVM lock error");
+			ret = ERROR_FLASH_PROTECTED;
+		}
+
+		if (status & (1 << 2)) { /* PROGE */
+			LOG_ERROR("SAMD: NVM programming error");
+			ret = ERROR_FLASH_OPER_UNSUPPORTED;
+		}
+
+		if (status & (1 << 1)) { /* ADDRE */
+			LOG_ERROR("SAMD: NVM address error");
+			ret = ERROR_FLASH_OPERATION_FAILED;
+		}
+
+		/* Clear the error conditions by writing a one to them */
+		ret2 = target_write_u16(target,
+				SAMD_NVMCTRL + SAMD5x_NVMCTRL_INTFLAG, status);
+		if (ret2 != ERROR_OK)
+			LOG_ERROR("Can't clear NVM error conditions");
+
+	}
+	else
+	{
+		ret = target_read_u16(target,
 			SAMD_NVMCTRL + SAMD_NVMCTRL_STATUS, &status);
-	if (ret != ERROR_OK) {
-		LOG_ERROR("Can't read NVM status");
-		return ret;
+		if (ret != ERROR_OK) {
+			LOG_ERROR("Can't read NVM status");
+			return ret;
+		}
+
+		if ((status & 0x001C) == 0)
+			return ERROR_OK;
+
+		if (status & (1 << 4)) { /* NVME */
+			LOG_ERROR("SAMD: NVM Error");
+			ret = ERROR_FLASH_OPERATION_FAILED;
+		}
+
+		if (status & (1 << 3)) { /* LOCKE */
+			LOG_ERROR("SAMD: NVM lock error");
+			ret = ERROR_FLASH_PROTECTED;
+		}
+
+		if (status & (1 << 2)) { /* PROGE */
+			LOG_ERROR("SAMD: NVM programming error");
+			ret = ERROR_FLASH_OPER_UNSUPPORTED;
+		}
+
+		/* Clear the error conditions by writing a one to them */
+		ret2 = target_write_u16(target,
+				SAMD_NVMCTRL + SAMD_NVMCTRL_STATUS, status);
+		if (ret2 != ERROR_OK)
+			LOG_ERROR("Can't clear NVM error conditions");
 	}
-
-	if ((status & 0x001C) == 0)
-		return ERROR_OK;
-
-	if (status & (1 << 4)) { /* NVME */
-		LOG_ERROR("SAMD: NVM Error");
-		ret = ERROR_FLASH_OPERATION_FAILED;
-	}
-
-	if (status & (1 << 3)) { /* LOCKE */
-		LOG_ERROR("SAMD: NVM lock error");
-		ret = ERROR_FLASH_PROTECTED;
-	}
-
-	if (status & (1 << 2)) { /* PROGE */
-		LOG_ERROR("SAMD: NVM programming error");
-		ret = ERROR_FLASH_OPER_UNSUPPORTED;
-	}
-
-	/* Clear the error conditions by writing a one to them */
-	ret2 = target_write_u16(target,
-			SAMD_NVMCTRL + SAMD_NVMCTRL_STATUS, status);
-	if (ret2 != ERROR_OK)
-		LOG_ERROR("Can't clear NVM error conditions");
 
 	return ret;
 }
@@ -526,9 +674,19 @@ static int samd_issue_nvmctrl_command(struct target *target, uint16_t cmd)
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
-	/* Issue the NVM command */
-	res = target_write_u16(target,
+	if (is_target_cortex_m4(target))
+	{
+		/* Issue the NVM command */
+		res = target_write_u16(target,
+			SAMD_NVMCTRL + SAMD5x_NVMCTRL_CTRLB, SAMD_NVM_CMD(cmd));
+	}
+	else
+	{
+		/* Issue the NVM command */
+		res = target_write_u16(target,
 			SAMD_NVMCTRL + SAMD_NVMCTRL_CTRLA, SAMD_NVM_CMD(cmd));
+	}
+
 	if (res != ERROR_OK)
 		return res;
 
@@ -548,6 +706,27 @@ static int samd_erase_row(struct target *target, uint32_t address)
 	if (res == ERROR_OK)
 		res = samd_issue_nvmctrl_command(target,
 				address == SAMD_USER_ROW ? SAMD_NVM_CMD_EAR : SAMD_NVM_CMD_ER);
+
+	if (res != ERROR_OK)  {
+		LOG_ERROR("Failed to erase row containing %08" PRIx32, address);
+		return ERROR_FAIL;
+	}
+
+	return ERROR_OK;
+}
+
+static int samd_erase_block(struct target *target, uint32_t address)
+{
+	int res;
+
+	/* Set an address contained in the block to be erased */
+	res = target_write_u32(target,
+			SAMD_NVMCTRL + SAMD5x_NVMCTRL_ADDR, address >> 1);
+
+	/* Issue the Erase Block command to erase that block. */
+	if (res == ERROR_OK)
+		res = samd_issue_nvmctrl_command(target,
+				address == SAMD_USER_ROW ? SAMD5x_NVM_CMD_EP : SAMD5x_NVM_CMD_EB);
 
 	if (res != ERROR_OK)  {
 		LOG_ERROR("Failed to erase row containing %08" PRIx32, address);
@@ -726,11 +905,24 @@ static int samd_erase(struct flash_bank *bank, int first_sect, int last_sect)
 	}
 
 	/* For each sector to be erased */
-	for (s = first_sect; s <= last_sect; s++) {
-		res = samd_erase_row(bank->target, bank->sectors[s].offset);
-		if (res != ERROR_OK) {
-			LOG_ERROR("SAMD: failed to erase sector %d at 0x%08" PRIx32, s, bank->sectors[s].offset);
-			return res;
+	if (is_chip_cortex_m4(chip))
+	{
+		for (s = first_sect; s <= last_sect; s++) {
+			res = samd_erase_block(bank->target, bank->sectors[s].offset);
+			if (res != ERROR_OK) {
+				LOG_ERROR("SAMD: failed to erase sector %d at 0x%08" PRIx32, s, bank->sectors[s].offset);
+				return res;
+			}
+		}
+	}
+	else
+	{
+		for (s = first_sect; s <= last_sect; s++) {
+			res = samd_erase_row(bank->target, bank->sectors[s].offset);
+			if (res != ERROR_OK) {
+				LOG_ERROR("SAMD: failed to erase sector %d at 0x%08" PRIx32, s, bank->sectors[s].offset);
+				return res;
+			}
 		}
 	}
 
@@ -762,20 +954,39 @@ static int samd_write(struct flash_bank *bank, const uint8_t *buffer,
 	}
 
 	/* Check if we need to do manual page write commands */
-	res = target_read_u32(bank->target, SAMD_NVMCTRL + SAMD_NVMCTRL_CTRLB, &nvm_ctrlb);
+	if(is_chip_cortex_m4(chip))
+	{
+		res = target_read_u32(bank->target, SAMD_NVMCTRL + SAMD5x_NVMCTRL_CTRLA, &nvm_ctrlb);
+		if (res != ERROR_OK)
+			return res;
 
-	if (res != ERROR_OK)
-		return res;
+		if (SAMD5x_NVM_WMODE_MAN(nvm_ctrlb))
+			manual_wp = true;
+		else
+			manual_wp = false;
 
-	if (nvm_ctrlb & SAMD_NVM_CTRLB_MANW)
-		manual_wp = true;
+		res = samd_issue_nvmctrl_command(bank->target, SAMD5x_NVM_CMD_PBC);
+		if (res != ERROR_OK) {
+			LOG_ERROR("%s: %d", __func__, __LINE__);
+			return res;
+		}
+	}
 	else
-		manual_wp = false;
+	{
+		res = target_read_u32(bank->target, SAMD_NVMCTRL + SAMD_NVMCTRL_CTRLB, &nvm_ctrlb);
+		if (res != ERROR_OK)
+			return res;
 
-	res = samd_issue_nvmctrl_command(bank->target, SAMD_NVM_CMD_PBC);
-	if (res != ERROR_OK) {
-		LOG_ERROR("%s: %d", __func__, __LINE__);
-		return res;
+		if (nvm_ctrlb & SAMD_NVM_CTRLB_MANW)
+			manual_wp = true;
+		else
+			manual_wp = false;
+
+		res = samd_issue_nvmctrl_command(bank->target, SAMD_NVM_CMD_PBC);
+		if (res != ERROR_OK) {
+			LOG_ERROR("%s: %d", __func__, __LINE__);
+			return res;
+		}
 	}
 
 	while (count) {
@@ -828,7 +1039,14 @@ static int samd_write(struct flash_bank *bank, const uint8_t *buffer,
 		 * If the page has not been written up to the last word
 		 * then issue CMD_WP always */
 		if (manual_wp || pg_offset + 4 * nw < chip->page_size) {
-			res = samd_issue_nvmctrl_command(bank->target, SAMD_NVM_CMD_WP);
+			if(is_chip_cortex_m4(chip))
+			{
+				res = samd_issue_nvmctrl_command(bank->target, SAMD5x_NVM_CMD_WP);
+			}
+			else
+			{
+				res = samd_issue_nvmctrl_command(bank->target, SAMD_NVM_CMD_WP);
+			}
 		} else {
 			/* Access through AHB is stalled while flash is being programmed */
 			usleep(200);
@@ -939,7 +1157,14 @@ COMMAND_HANDLER(samd_handle_set_security_command)
 			return ERROR_TARGET_NOT_HALTED;
 		}
 
-		res = samd_issue_nvmctrl_command(target, SAMD_NVM_CMD_SSB);
+		if (is_target_cortex_m4(target))
+		{
+			res = samd_issue_nvmctrl_command(target, SAMD5x_NVM_CMD_SSB);
+		}
+		else
+		{
+			res = samd_issue_nvmctrl_command(target, SAMD_NVM_CMD_SSB);
+		}		
 
 		/* Check (and clear) error conditions */
 		if (res == ERROR_OK)
