@@ -721,17 +721,29 @@ static int samd_erase_block(struct target *target, uint32_t address)
 
 	/* Set an address contained in the block to be erased */
 	res = target_write_u32(target,
-			SAMD_NVMCTRL + SAMD5x_NVMCTRL_ADDR, address >> 1);
-
-	/* Issue the Erase Block command to erase that block. */
-	if (res == ERROR_OK)
-		res = samd_issue_nvmctrl_command(target,
-				address == SAMD_USER_ROW ? SAMD5x_NVM_CMD_EP : SAMD5x_NVM_CMD_EB);
-
-	if (res != ERROR_OK)  {
-		LOG_ERROR("Failed to erase row containing %08" PRIx32, address);
+			SAMD_NVMCTRL + SAMD5x_NVMCTRL_ADDR, address);
+	if (res != ERROR_OK) {
+		LOG_ERROR("Failed to write NVMCTRL ADDR");
 		return ERROR_FAIL;
 	}
+
+	/* Issue the Erase Block command to erase that block. */
+	res = samd_issue_nvmctrl_command(target,
+			address == SAMD_USER_ROW ? SAMD5x_NVM_CMD_EP : SAMD5x_NVM_CMD_EB);
+
+	while (res != ERROR_OK)  {
+		LOG_ERROR("Failed to erase block containing %08" PRIx32, address);
+
+		usleep(100000);
+		res = samd_issue_nvmctrl_command(target,
+			address == SAMD_USER_ROW ? SAMD5x_NVM_CMD_EP :SAMD5x_NVM_CMD_EB);
+
+		if (res == ERROR_OK)
+			LOG_INFO("Retry succeeded!");
+	}
+
+	/* Wait for erase to complete */
+	usleep(100000);
 
 	return ERROR_OK;
 }
